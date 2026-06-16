@@ -1,0 +1,596 @@
+---
+title: "Stat Output"
+author: "Lana Robison"
+date: "2026-04-01"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+# Research Question: How do NHL team defensive systems influence traditional goalie statistics? 
+
+## Load Packages and Data 
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(broom)
+library(GGally)
+library(car)
+library(ggcorrplot)
+
+
+nhl_dat <- read_csv("C:/Users/lanac/OneDrive - Baylor University/STA 43C8 Capstone/data_clean/master_goalie_dataset.csv")
+
+```
+
+
+## Define Response Variable and Build Broad Predictor Variable Pool
+
+- Save percentage was chosen as the response variable because it is a direct measure of goalie performance
+- builds a broad predictor pool from dataset
+- Team totals were converted to per-game rates to make defensive context more comparable across teams and seasons
+- Variables closely tied to goals allowed or save outcomes were excluded to reduce leakage into the response
+
+
+```{r}
+response_var = "sv_percent"
+
+# Create rate-based defensive/context predictors
+goalie_model_df = nhl_dat |>
+  mutate(
+    games_scale = if_else(team_games_played > 0, team_games_played, NA_real_),
+
+    # Team strength / territorial control
+    team_goals_for_pg = team_goals_for / games_scale,
+
+    # Defensive environment - volume / shot quality / play outcomes
+    team_x_goals_against_pg = team_x_goals_against / games_scale,
+    team_shots_on_goal_against_pg = team_shots_on_goal_against / games_scale,
+    team_shot_attempts_against_pg = team_shot_attempts_against / games_scale,
+    team_unblocked_shot_attempts_against_pg = team_unblocked_shot_attempts_against / games_scale,
+    team_blocked_shot_attempts_against_pg = team_blocked_shot_attempts_against / games_scale,
+    team_rebounds_against_pg = team_rebounds_against / games_scale,
+    team_freeze_against_pg = team_freeze_against / games_scale,
+    team_play_stopped_against_pg = team_play_stopped_against / games_scale,
+    team_play_continued_in_zone_against_pg = team_play_continued_in_zone_against / games_scale,
+    team_play_continued_outside_zone_against_pg = team_play_continued_outside_zone_against / games_scale,
+
+    # Turnover / discipline / support context
+    team_takeaways_against_pg = team_takeaways_against / games_scale,
+    team_giveaways_against_pg = team_giveaways_against / games_scale,
+    team_d_zone_giveaways_against_pg = team_d_zone_giveaways_against / games_scale,
+    team_penalties_against_pg = team_penalties_against / games_scale,
+    team_penality_minutes_against_pg = team_penality_minutes_against / games_scale,
+
+    # Danger-based team defense
+    team_low_danger_shots_against_pg = team_low_danger_shots_against / games_scale,
+    team_medium_danger_shots_against_pg = team_medium_danger_shots_against / games_scale,
+    team_high_danger_shots_against_pg = team_high_danger_shots_against / games_scale,
+    team_low_dangerx_goals_against_pg = team_low_dangerx_goals_against / games_scale,
+    team_medium_dangerx_goals_against_pg = team_medium_dangerx_goals_against / games_scale,
+    team_high_dangerx_goals_against_pg = team_high_dangerx_goals_against / games_scale,
+
+    # Shot credit / adjusted pressure
+    team_total_shot_credit_against_pg = team_total_shot_credit_against / games_scale,
+    team_score_adjusted_total_shot_credit_against_pg = team_score_adjusted_total_shot_credit_against / games_scale,
+    team_score_flurry_adjusted_total_shot_credit_against_pg = team_score_flurry_adjusted_total_shot_credit_against / games_scale
+  )
+
+candidate_vars = c(
+  # team strength / support
+  "team_x_goals_percentage",
+  "team_corsi_percentage",
+  "team_fenwick_percentage",
+  "team_goals_for_pg",
+
+  # defensive environment
+  "team_x_goals_against_pg",
+  "team_shots_on_goal_against_pg",
+  "team_shot_attempts_against_pg",
+  "team_unblocked_shot_attempts_against_pg",
+  "team_blocked_shot_attempts_against_pg",
+  "team_rebounds_against_pg",
+  "team_freeze_against_pg",
+  "team_play_stopped_against_pg",
+  "team_play_continued_in_zone_against_pg",
+  "team_play_continued_outside_zone_against_pg",
+
+  # turnover / discipline
+  "team_takeaways_against_pg",
+  "team_giveaways_against_pg",
+  "team_d_zone_giveaways_against_pg",
+  "team_penalties_against_pg",
+  "team_penality_minutes_against_pg",
+
+  # danger profile
+  "team_low_danger_shots_against_pg",
+  "team_medium_danger_shots_against_pg",
+  "team_high_danger_shots_against_pg",
+  "team_low_dangerx_goals_against_pg",
+  "team_medium_dangerx_goals_against_pg",
+  "team_high_dangerx_goals_against_pg",
+
+  # adjusted pressure metrics
+  "team_total_shot_credit_against_pg",
+  "team_score_adjusted_total_shot_credit_against_pg",
+  "team_score_flurry_adjusted_total_shot_credit_against_pg",
+
+  # goalie context
+  "gp_nhl",
+  "gs",
+  "toi_min"
+)
+
+model_data = goalie_model_df |>
+  select(player, season, team, all_of(response_var), all_of(candidate_vars)) |>
+  drop_na()
+
+
+```
+
+
+## Create train/ test split
+
+```{r}
+set.seed(123)
+
+data_split = initial_split(model_data, prop = 0.8)
+train_data = training(data_split)
+test_data = testing(data_split)
+
+```
+
+
+## Create Cross-Validation Folds
+
+```{r}
+cv_folds = vfold_cv(train_data, v = 5)
+
+```
+
+
+## Create Common Preprocessing recipe
+
+- standardizes predictors and marks player, season, and team as IDS, not predictors
+
+```{r}
+base_recipe = recipe(
+  as.formula(paste(response_var, "~ .")),
+  data = train_data
+) |>
+  update_role(player, season, team, new_role = "id variable") |>
+  step_zv(all_predictors()) |>
+  step_normalize(all_numeric_predictors())
+
+```
+
+
+## Run Lasso for Variable Selection 
+
+- Lasso was used to reduce the broad predictor pool in a data-driven way
+- The lasso model selected a penalty of 0.0000187
+- Lasso retained 21 predictors, suggesting goalie save percentage may be associated with several aspects of team defensive environment.
+
+```{r}
+
+lasso_model = linear_reg(mixture = 1, penalty = tune()) |>
+  set_engine("glmnet")
+
+lasso_wf = workflow() |>
+  add_recipe(base_recipe) |>
+  add_model(lasso_model)
+
+penalty_grid = grid_regular(
+  penalty(range = c(-6, 1)),
+  levels = 100
+)
+
+lasso_tune = tune_grid(
+  lasso_wf,
+  resamples = cv_folds,
+  grid = penalty_grid,
+  metrics = metric_set(rmse, rsq, mae)
+)
+
+collect_metrics(lasso_tune)
+autoplot(lasso_tune)
+
+best_lasso = lasso_tune |>
+  select_best(metric = "rmse")
+
+best_lasso
+
+final_lasso_wf = finalize_workflow(lasso_wf, best_lasso)
+
+final_lasso_fit = final_lasso_wf |>
+  fit(data = train_data)
+
+lasso_coefs = final_lasso_fit |>
+  extract_fit_parsnip() |>
+  tidy()
+
+lasso_coefs
+
+selected_vars = lasso_coefs |>
+  filter(term != "(Intercept)", estimate != 0) |>
+  pull(term)
+
+selected_vars
+
+```
+
+- retained variables were treated as the strongest candidates for the regression model in the original variable space
+
+
+## Run PCA for multicollinearity
+
+- uses PCA to study the correlation structure and prepare for PCR
+- helps determine whether multicollinearity is severe enough to justify a component-based model
+- PCA suggests that many defensive variables measure overlapping parts of team environment
+- This supports using a component-based model to address multicollinearity
+
+```{r}
+# Correlation matrix first
+train_predictors_only = train_data |>
+  select(all_of(candidate_vars))
+
+cor_mat = cor(train_predictors_only, use = "pairwise.complete.obs")
+
+ggcorrplot(
+  cor_mat,
+  hc.order = TRUE,
+  type = "lower",
+  lab = FALSE
+)
+
+# PCA recipe for exploratory variance summary
+pca_recipe = recipe(
+  as.formula(paste(response_var, "~ .")),
+  data = train_data
+) |>
+  update_role(player, season, team, new_role = "id variable") |>
+  step_zv(all_predictors()) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_pca(all_predictors(), threshold = 0.95)
+
+pca_prep = pca_recipe |>
+  prep()
+
+pca_variance = tidy(pca_prep, number = 3, type = "variance")
+pca_loadings = tidy(pca_prep, number = 3)
+
+pca_variance
+pca_loadings
+
+
+pca_scores = bake(pca_prep, new_data = NULL)
+
+pc_names = names(pca_scores) |>
+  keep(~ str_detect(.x, "^PC")) |>
+  head(4)
+
+ggpairs(
+  pca_scores |>
+    select(all_of(pc_names))
+)
+
+```
+
+
+
+## Fit lasso model
+
+- fits an interpretable regression model using the lasso-selected variables
+
+```{r}
+lasso_formula = as.formula(
+  paste(response_var, "~", paste(selected_vars, collapse = " + "))
+)
+
+lasso_recipe = recipe(lasso_formula, data = train_data)
+
+model = linear_reg() |>
+  set_engine("lm")
+
+lasso_wf = workflow() |>
+  add_recipe(lasso_recipe) |>
+  add_model(model)
+
+lasso_fit = lasso_wf |>
+  fit(data = train_data)
+
+lasso_fit |>
+  extract_fit_engine() |>
+  tidy(conf.int = TRUE)
+
+lasso_fit |>
+  extract_fit_engine() |>
+  glance()
+
+lasso_fit |>
+  extract_fit_engine() |>
+  vif()
+
+```
+
+- Several team defensive variables are statistically associated with save percentage in this model
+- The lasso-selected regression has $R^2 = 0.472$ and adjusted $R^2 = 0.460$, so it explains a moderate amount of variation in save percentage
+- VIF values are very large for several predictors, indicating substantial multicollinearity, because of this, coefficient-level interpretation should be made cautiously
+
+
+## Fit principal component regression model
+
+- fits PCR as the multicollinearity-focused alternative
+
+```{r}
+# Tune the number of PCs 
+pcr_recipe = recipe(
+  as.formula(paste(response_var, "~ .")),
+  data = train_data
+) |>
+  update_role(player, season, team, new_role = "id variable") |>
+  step_zv(all_predictors()) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_pca(all_predictors(), num_comp = tune())
+
+pcr_wf = workflow() |>
+  add_recipe(pcr_recipe) |>
+  add_model(model)
+
+pcr_grid = tibble(num_comp = 1:length(candidate_vars))
+
+set.seed(123)
+
+pcr_tune = tune_grid(
+  pcr_wf,
+  resamples = cv_folds,
+  grid = pcr_grid,
+  metrics = metric_set(rmse, rsq, mae)
+)
+
+collect_metrics(pcr_tune)
+autoplot(pcr_tune)
+
+best_pcr = pcr_tune |>
+  select_best(metric = "rmse")
+
+best_pcr
+
+final_pcr_wf = finalize_workflow(pcr_wf, best_pcr)
+
+pcr_fit = final_pcr_wf |>
+  fit(data = train_data)
+
+pcr_fit |>
+  extract_fit_engine() |>
+  tidy(conf.int = TRUE)
+
+pcr_fit |>
+  extract_fit_engine() |>
+  glance()
+
+pcr_fit |>
+  extract_fit_engine() |>
+  vif()
+
+```
+
+- PCR selected 27 principal components
+- The PCR model has $R^2 = 0.473$ and adjusted $R^2 = 0.457$, which is very similar to the lasso-selected regression
+- All PCR VIF values equal 1, so multicollinearity was removed in this specification
+- PCR is more stable statistically, but less directly interpretable in hockey terms
+
+
+## Diagnostics for lasso-informed regression model
+
+- check regression assumptions
+- plots were used to check linearity, constant variance, normality, and potential influence issues
+- helps determine whether the regression results are appropriate for interpretation 
+
+```{r}
+lasso_diag = lasso_fit |>
+  extract_fit_engine() |>
+  augment()
+
+ggplot(lasso_diag, aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Lasso: Residuals vs Fitted",
+    x = "Fitted values",
+    y = "Residuals"
+  )
+
+ggplot(lasso_diag, aes(sample = .std.resid)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(title = "Lasso: Normal Q-Q Plot")
+
+ggplot(lasso_diag, aes(x = .fitted, y = sqrt(abs(.std.resid)))) +
+  geom_point() +
+  geom_smooth(se = FALSE, method = "loess", color = "blue") +
+  labs(
+    title = "Lasso: Scale-Location Plot",
+    x = "Fitted values",
+    y = "Sqrt(|Standardized Residuals|)"
+  )
+
+ggplot(lasso_diag, aes(x = .hat, y = .std.resid)) +
+  geom_point() +
+  labs(
+    title = "Lasso: Leverage vs Standardized Residuals",
+    x = "Leverage",
+    y = "Standardized residuals"
+  )
+
+```
+
+- checks were included so model quality could be assessed beyond predictive performance alone
+
+
+## Diagnostics for PCR and fit ridge
+
+- PCR diagnostics were also reviewed to assess whether the model fit was reasonable
+- Ridge regression was included as an additional benchmark model
+
+
+```{r}
+
+pcr_diag = pcr_fit |>
+  extract_fit_engine() |>
+  augment()
+
+ggplot(pcr_diag, aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "PCR: Residuals vs Fitted",
+    x = "Fitted values",
+    y = "Residuals"
+  )
+
+ggplot(pcr_diag, aes(sample = .std.resid)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(title = "PCR: Normal Q-Q Plot")
+
+ridge_model = linear_reg(mixture = 0, penalty = tune()) |>
+  set_engine("glmnet")
+
+ridge_wf = workflow() |>
+  add_recipe(base_recipe) |>
+  add_model(ridge_model)
+
+set.seed(123)
+
+ridge_tune = tune_grid(
+  ridge_wf,
+  resamples = cv_folds,
+  grid = penalty_grid,
+  metrics = metric_set(rmse, rsq, mae)
+)
+
+collect_metrics(ridge_tune)
+autoplot(ridge_tune)
+
+best_ridge = ridge_tune |>
+  select_best(metric = "rmse")
+
+best_ridge
+
+final_ridge_wf = finalize_workflow(ridge_wf, best_ridge)
+
+final_ridge_fit = final_ridge_wf |>
+  fit(data = train_data)
+
+final_ridge_fit |>
+  extract_fit_parsnip() |>
+  tidy()
+
+```
+
+
+
+
+## Compare models on the test set
+
+- compares everything on the same test set
+
+```{r}
+lasso_penalized_pred = predict(final_lasso_fit, new_data = test_data) |>
+  bind_cols(test_data |>
+              select(player, season, team, all_of(response_var))) |>
+  rename(actual = all_of(response_var), predicted = .pred) |>
+  mutate(model = "lasso_penalized")
+
+lasso_regression_pred = predict(lasso_fit, new_data = test_data) |>
+  bind_cols(test_data |>
+              select(player, season, team, all_of(response_var))) |>
+  rename(actual = all_of(response_var), predicted = .pred) |>
+  mutate(model = "lasso_selected_regression")
+
+pcr_pred = predict(pcr_fit, new_data = test_data) |>
+  bind_cols(test_data |>
+              select(player, season, team, all_of(response_var))) |>
+  rename(actual = all_of(response_var), predicted = .pred) |>
+  mutate(model = "pcr")
+
+ridge_pred = predict(final_ridge_fit, new_data = test_data) |>
+  bind_cols(test_data |>
+              select(player, season, team, all_of(response_var))) |>
+  rename(actual = all_of(response_var), predicted = .pred) |>
+  mutate(model = "ridge")
+
+all_preds = bind_rows(
+  lasso_penalized_pred,
+  lasso_regression_pred,
+  pcr_pred,
+  ridge_pred
+)
+
+model_summary = all_preds |>
+  group_by(model) |>
+  summarise(
+    rmse = rmse_vec(actual, predicted),
+    rsq = rsq_vec(actual, predicted),
+    mae = mae_vec(actual, predicted)
+  ) |>
+  arrange(rmse)
+
+model_summary
+
+```
+
+- PCR, lasso-selected regression, and penalized lasso performed very similarly on the test set
+- Ridge performed somewhat worse than the other models
+- Overall, team defensive context helps explain save percentage, but no single model overwhelmingly outperformed the others
+
+
+## Example: Real Goalie
+
+- translates the model into a practical hockey application
+- goal is to show how predicted save percentage changes under different defensive environments
+- helps connect the statistical model back to player evaluation
+
+```{r}
+example_goalie = model_data |>
+  filter(player == "Jonathan Quick", season == 2020) |>
+  slice(1)
+
+example_observed = example_goalie |>
+  mutate(scenario = "Observed environment")
+
+example_better_defense = example_goalie |>
+  mutate(
+    team_high_danger_shots_against_pg = team_high_danger_shots_against_pg * 0.90,
+    team_x_goals_against_pg = team_x_goals_against_pg * 0.95,
+    team_rebounds_against_pg = team_rebounds_against_pg * 0.90,
+    scenario = "Improved team defense"
+  )
+
+example_compare = bind_rows(
+  example_observed,
+  example_better_defense
+)
+
+example_compare |>
+  mutate(
+    predicted_sv_lasso = predict(lasso_fit, new_data = example_compare)$.pred,
+    predicted_sv_pcr = predict(pcr_fit, new_data = example_compare)$.pred
+  ) |>
+  select(player, season, team, scenario, sv_percent, predicted_sv_lasso, predicted_sv_pcr)
+
+```
+
+
+
+
+
+
+
+
+

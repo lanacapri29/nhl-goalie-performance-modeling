@@ -1,0 +1,306 @@
+---
+title: "NHL Goalies Capstone Project- Data Cleaning"
+output: word_document
+date: "2026-02-27"
+author: "Lana Robison"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Data Joining & Cleaning
+
+
+## NHL Edge Goalie Data: Data Cleaning
+
+- Join Data from NHL Edge Vertically
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(stringr)
+
+nhl_edge_path <- "C:/Users/lanac/OneDrive - Baylor University/STA 43C8 Capstone/NHL Edge Goalie Data"
+
+nhl_files <- list.files(nhl_edge_path, 
+                        pattern = "\\.xlsx$", 
+                        full.names = TRUE)
+
+nhl_edge_raw_all <- map_dfr(
+  nhl_files,
+  ~ read_excel(.x, col_types = "text") %>%
+    clean_names() %>%
+    mutate(
+      # keys 
+      season = as.numeric(season),
+
+      # numeric columns 
+      gp = as.numeric(gp),
+      gs = as.numeric(gs),
+      cg = as.numeric(cg),
+      ig = as.numeric(ig),
+      cg_percent = as.numeric(cg_percent),
+      gs_900 = as.numeric(gs_900),
+      gs_900_percent = as.numeric(gs_900_percent),
+
+      gf = as.numeric(gf),
+      ga = as.numeric(ga),
+      gfa = as.numeric(gfa),
+      gaa = as.numeric(gaa),
+
+      row = as.numeric(row),
+      rol = as.numeric(rol),
+      sa_60 = as.numeric(sa_60),
+      sv_percent = as.numeric(sv_percent)
+    ),
+  .id = "file_id"
+)
+
+
+```
+
+
+
+```{r}
+nhl_edge_clean <- nhl_edge_raw_all %>%
+  mutate(
+    player = str_squish(player),
+    team   = str_to_upper(str_squish(team)),
+    season = floor(season / 10000)
+  ) %>%
+  filter(!is.na(player), player != "", !is.na(team), team != "") %>%
+  distinct(player, team, season, .keep_all = TRUE)
+
+
+```
+- important to note that while seasons are technically labelled as 2008-2009, all seasons in this project will just be referred to by the starting years, so in this instance 2008-2009 season is the 2008 season
+
+
+
+
+## Moneypuck Goalie & Team Data (2008-09 to 2024-25 season): Data Cleaning
+
+Unzip files
+```{r}
+mp_zip_goalies <- "C:/Users/lanac/OneDrive - Baylor University/STA 43C8 Capstone/goalies_2008_to_2024.zip"
+
+mp_zip_teams   <- "C:/Users/lanac/OneDrive - Baylor University/STA 43C8 Capstone/teams_2008_to_2024.zip"
+
+dir.create("data_raw", showWarnings = FALSE)
+
+unzip(mp_zip_goalies, exdir = "data_raw")
+unzip(mp_zip_teams,   exdir = "data_raw")
+
+list.files("data_raw")
+
+
+```
+
+
+```{r}
+mp_goalies_raw <- read_csv("data_raw/goalies_2008_to_2024.csv") %>%
+  clean_names()
+
+mp_teams_raw   <- read_csv("data_raw/teams_2008_to_2024.csv") %>%
+  clean_names()
+
+
+```
+
+
+```{r}
+mp_goalies_clean <- mp_goalies_raw %>%
+  mutate(
+    player    = str_squish(name),
+    team      = str_to_upper(str_squish(team)),
+    season    = as.numeric(season),
+    situation = str_to_lower(str_squish(situation)),
+    position  = str_to_upper(str_squish(position))
+  ) %>%
+  filter(position == "G", situation == "all")
+
+mp_teams_clean <- mp_teams_raw %>%
+  mutate(
+    team      = str_to_upper(str_squish(team)),
+    season    = as.numeric(season),
+    situation = str_to_lower(str_squish(situation))
+  ) %>%
+  filter(situation == "all")
+
+```
+
+
+Check distinct teams
+```{r}
+sort(unique(mp_goalies_clean$team))
+sort(unique(mp_teams_clean$team))
+sort(unique(nhl_edge_clean$team))
+```
+
+Team Name Standardization
+```{r}
+standardize_team <- function(x) {
+  x <- str_squish(x)
+  x <- str_to_upper(x)
+  x <- str_replace_all(x, "\\.", "")
+  
+  x <- recode(
+    x,
+    "PHX" = "ARI",
+    "LA"  = "LAK",
+    "NJ"  = "NJD",
+    "SJ"  = "SJS",
+    "TB"  = "TBL",
+    .default = x
+  )
+  
+  return(x)
+}
+
+```
+
+
+Apply function to moneypuck data
+```{r}
+mp_goalies_clean <- mp_goalies_clean %>%
+  mutate(team = standardize_team(team))
+
+mp_teams_clean <- mp_teams_clean %>%
+  mutate(team = standardize_team(team))
+```
+
+
+
+keep most recent team in NHL edge data
+```{r}
+nhl_edge_clean <- nhl_edge_clean %>%
+  mutate(
+    team = str_squish(team),
+    team = if_else(str_detect(team, ","), word(team, -1, sep = ","), team),
+    team = standardize_team(team)
+  )
+```
+
+
+verify team codes are standardized 
+```{r}
+sort(unique(nhl_edge_clean$team))
+sort(unique(mp_goalies_clean$team))
+sort(unique(mp_teams_clean$team))
+```
+
+check team codes are standardized
+```{r}
+anti_join(
+  mp_goalies_clean %>% distinct(season, team),
+  nhl_edge_clean   %>% distinct(season, team),
+  by = c("season", "team")
+) %>% arrange(season, team) %>% print(n = 200)
+```
+
+
+account for shared variables 
+
+```{r}
+mp_teams_prefixed <- mp_teams_clean %>%
+  rename_with(~ paste0("team_", .x), -c(season, team))
+
+
+```
+
+
+## Joining Data
+
+Join Moneypuck Goalies and Team Data
+```{r}
+mp_master <- mp_goalies_clean %>%
+  left_join(mp_teams_prefixed, by = c("season", "team"))
+
+team_cols <- names(mp_master)[str_detect(names(mp_master), "^team_")]
+
+mean(rowSums(is.na(mp_master[team_cols])) == length(team_cols))
+```
+
+Join Moneypuck Master Data with NHL Edge Data 
+```{r}
+master_all <- mp_master %>%
+  left_join(nhl_edge_clean,
+            by = c("season", "team", "player"),
+            suffix = c("_mp", "_nhl"))
+
+master_all %>%
+  summarise(
+    total_rows = n(),
+    pct_has_gp = mean(!is.na(gp)),
+    pct_has_sv = mean(!is.na(sv_percent)),
+    pct_has_gaa = mean(!is.na(gaa))
+  )
+```
+
+
+### Cleaning the master dataset
+
+
+Games Played Threshold: 
+- Goalies must have played greater than 8% of their teams total games played to be in data 
+- 8% threshold accounts for the shortened 2012 (lockout), 2019 & 2020 (covid) seasons
+```{r}
+master_clean <- master_all %>%
+  filter(gp / team_games_played >= 0.08)
+```
+
+Remove NA SV% and GAA
+```{r}
+master_clean <- master_clean %>%
+  filter(!is.na(sv_percent),
+         !is.na(gaa))
+```
+
+Remove redundant variables: 
+```{r}
+master_clean <- master_clean %>%
+  rename(
+    gp_mp  = games_played,
+    gp_nhl = gp
+  ) %>%
+  mutate(
+    toi_min = if_else(
+      is.na(toi), NA_real_,
+      {
+        parts <- str_split(toi, ":", simplify = TRUE)
+        as.numeric(parts[,1]) + as.numeric(parts[,2]) / 60
+      }
+    )
+  )%>%
+  select(-any_of(c(
+    "file_id","s_c","name","position","situation",
+    "team_name","team_team_1","team_position","team_situation",
+    "team_penalities_for", "team_penalities_against", "toi"
+  ))) 
+  
+
+```
+
+
+Save Clean Dataset
+
+```{r}
+dir.create("data_clean")
+
+write_csv(master_clean, "data_clean/master_goalie_dataset.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

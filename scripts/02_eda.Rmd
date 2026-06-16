@@ -1,0 +1,265 @@
+---
+title: "NHL Goalies Analysis"
+author: "Lana Robison"
+date: "2026-02-27"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+# Research Question: How does NHL team defensive systems relate to goalie performance? 
+
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(readr)
+library(stringr)
+library(ggplot2)
+library(ggcorrplot)
+
+master_clean <- read_csv("C:/Users/lanac/OneDrive - Baylor University/STA 43C8 Capstone/data_clean/master_goalie_dataset.csv")
+
+```
+
+
+## Basic Structure of Dataset
+
+```{r}
+dim(master_clean)
+colnames(master_clean)
+
+```
+
+```{r}
+summary(master_clean$sv_percent)
+summary(master_clean$gaa)
+```
+
+- dataset contains 1,230 goalie-season observations and 151 variables
+
+
+## Distributions of Key Outcomes
+
+```{r}
+
+ggplot(master_clean, aes(x = sv_percent)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Save Percentage (2008–2024)",
+       x = "Save Percentage",
+       y = "Count")
+
+summary(master_clean$sv_percent)
+
+```
+
+- Save percentage is tightly clustered in this dataset, with a mean of 0.9073 and median of 0.9090
+- suggests most NHL goalies perform within a narrow range, so even small differences may matter
+
+
+```{r}
+ggplot(master_clean, aes(x = gaa)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Goals Against Average",
+       x = "GAA",
+       y = "Count")
+
+summary(master_clean$gaa)
+
+```
+
+- Goals against average is more spread out than save percentage
+
+
+## Era Trends
+
+```{r}
+league_sv <- master_clean %>%
+  group_by(season) %>%
+  summarise(mean_sv = mean(sv_percent))
+
+ggplot(league_sv, aes(x = season, y = mean_sv)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "League Average Save Percentage by Season",
+       y = "Mean SV%",
+       x = "Season")
+
+```
+
+- League-average save percentage changes over time, so goalie results should be interpreted within the season they occurred
+
+
+
+```{r}
+league_gaa <- master_clean %>%
+  group_by(season) %>%
+  summarise(mean_gaa = mean(gaa))
+
+ggplot(league_gaa, aes(x = season, y = mean_gaa)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "League Average GAA by Season",
+       y = "Mean GAA",
+       x = "Season")
+```
+
+- League-average GAA also changes across seasons, which suggests league environment may affect traditional goalie stats
+
+## Team Defense Distributions
+
+```{r}
+ggplot(master_clean, aes(x = team_x_goals_against)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Team Expected Goals Against")
+
+```
+
+- Team expected goals against varies across observations, so goalies face different defensive environments
+
+
+```{r}
+ggplot(master_clean, aes(x = team_high_danger_shots_against)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Team High Danger Shots Against")
+
+```
+
+- High-danger shots against also varies across teams, suggesting some goalies face more dangerous chances than others
+
+```{r}
+ggplot(master_clean, aes(x = team_corsi_percentage)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Team Corsi Percentage")
+
+```
+
+- team corsi %: measures a team's share of total shot attempts while at even strength, it is meant to determine a teams puck possession as teams who control the puck tend to generate more shot attempts
+
+- Team Corsi percentage varies across teams, which suggests teams differ in territorial control and puck possession
+
+
+## Goalie vs. Team Defense 
+
+```{r}
+ggplot(master_clean, 
+       aes(x = team_x_goals_against, y = sv_percent)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  labs(title = "Save Percentage vs Team xGoals Against",
+       x = "Team xGA",
+       y = "SV%")
+
+
+```
+
+- plot suggests team defensive environment is related to goalie save percentage
+- Goalies on teams allowing tougher defensive conditions may be more likely to post lower save percentages
+
+```{r}
+ggplot(master_clean, 
+       aes(x = team_high_danger_shots_against, y = sv_percent)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm")
+
+```
+
+- This plot suggests that allowing more dangerous chances may be associated with worse goalie outcomes
+
+## Workload Effects 
+
+```{r}
+ggplot(master_clean,
+       aes(x = gp_nhl, y = sv_percent)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  labs(title = "Workload vs Save Percentage")
+```
+
+- Games played appears to have only a modest relationship with save percentage
+- This suggests workload alone does not fully explain goalie performance
+
+## Correlation Matrix 
+
+```{r}
+numeric_vars <- master_clean %>%
+  select(
+    sv_percent,
+    gaa,
+    gp_nhl,
+    sa_60,
+    team_x_goals_against,
+    team_high_danger_shots_against,
+    team_corsi_percentage,
+    team_fenwick_percentage
+  )
+
+corr_matrix <- cor(numeric_vars, use = "complete.obs")
+
+ggcorrplot(
+  corr_matrix,
+  type = "lower",
+  lab = TRUE,
+  hc.order = TRUE, 
+  title = "Correlation Matrix: Goalie Performance & Team Defense"
+)
+
+```
+
+- Several team defensive variables appear to be related to one another
+- This suggests multicollinearity may be an issue in later regression models
+
+## Fun Facts
+
+```{r}
+best_season_sv <- master_clean %>%
+  filter(gp_nhl >= 50) %>%
+  arrange(desc(sv_percent)) %>%
+  select(player, season, team, sv_percent, gp_nhl) %>%
+  slice(1:20)
+
+best_season_sv
+
+```
+
+- Several elite goalie-seasons stand out in the sample, including Tim Thomas in 2010 and Igor Shesterkin in 2021
+
+
+#### Goalie Instability: Count Unique Goalies per Team-Season
+
+```{r}
+goalie_counts <- master_clean %>%
+  group_by(season, team) %>%
+  summarise(
+    n_goalies = n_distinct(player),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_goalies))
+
+goalie_counts %>% slice(1:15)
+
+```
+
+- Some teams used many different goalies in a single season, suggesting instability in net
+
+#### Goalie Instability: Teams with Most Goalie Turnover Overall (2008 - 2024)
+
+```{r}
+team_turnover <- master_clean %>%
+  group_by(team) %>%
+  summarise(
+    total_goalies = n_distinct(player),
+    seasons = n_distinct(season),
+    avg_goalies_per_season = n() / seasons,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_goalies_per_season))
+
+team_turnover
+
+```
+
