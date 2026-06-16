@@ -1,32 +1,50 @@
 # NHL Goalie Performance Modeling
 
 ## Project Overview
-This project analyzes how NHL team defensive context influences traditional goalie performance metrics across multiple seasons. The goal was to evaluate whether team-level defensive environment helps explain variation in goalie outcomes such as save percentage.
+This project analyzes how NHL team defensive systems influence traditional goalie statistics, with save percentage used as the primary response variable. The goal was to evaluate whether team-level defensive context helps explain variation in goalie save percentage.
+
+## Research Question
+How do NHL team defensive systems influence traditional goalie statistics?
+
+## Data
+The final dataset combined MoneyPuck goalie data, MoneyPuck team data, and NHL Edge goalie data from the 2008-09 through 2024-25 NHL seasons. Each row represents a goalie-team-season observation. The final cleaned dataset contained 1,230 observations and 151 variables.
+
+Raw data files are not included in this repository. The `data/README.md` file documents the sources and cleaning process.
 
 ## Tools Used
 - R
-- tidymodels
 - tidyverse
+- tidymodels
 - ggplot2
 - glmnet
 - broom
+- GGally
+- car
+- ggcorrplot
+- janitor
+- readxl
+- stringr
 
 ## Methods
-- Cleaned and combined multi-season NHL goalie and team-defense data
-- Engineered standardized per-game and rate-based variables
-- Removed outcome-leakage variables to protect model validity
-- Compared LASSO, principal component regression, and ridge regression models
-- Evaluated model performance using RMSE and R²
-- Interpreted model results in the context of goalie performance and team defensive environment
+- Cleaned and standardized player names, team abbreviations, and season formats across multiple data sources
+- Engineered per-game and rate-based team defensive variables
+- Filtered low-sample goalie observations to improve reliability
+- Conducted exploratory data analysis on save percentage, GAA, team defense metrics, league trends, and correlations
+- Fit multiple linear regression, lasso regression, principal component regression, and ridge regression models
+- Evaluated multicollinearity, regression diagnostics, and train/test performance
+- Compared models using RMSE, R-squared, and MAE
 
 ## Key Results
-Top models achieved test RMSE around 0.0121 and test R² around 0.41. Results suggest that team defensive context helps explain variation in traditional goalie performance metrics.
+The lasso-informed regression explained a moderate amount of variation in save percentage, with training R-squared of 0.472 and adjusted R-squared of 0.460. On the test set, PCR, lasso-selected regression, and penalized lasso performed similarly, with RMSE values around 0.0121.
 
-## Business and Analytics Relevance
-This project demonstrates an end-to-end analytics workflow, including data preparation, feature engineering, model comparison, validation, and communication of findings. The workflow is relevant to data analyst roles involving performance evaluation, predictive modeling, and data-informed decision support.
+Overall, the results suggest that team defensive context is meaningfully related to goalie save percentage, but it does not fully explain goalie performance. Traditional goalie statistics should be interpreted alongside team defensive context rather than as purely individual measures.
 
 ## Repository Structure
-- `scripts/`: R scripts for data cleaning, feature engineering, modeling, and evaluation
-- `outputs/`: selected model results and visualizations
-- `report/`: final capstone report or summary
-- `data/`: data documentation or sample data only
+- `scripts/`: R code for data cleaning, EDA, modeling, diagnostics, and validation
+- `docs/`: data dictionary and supporting documentation
+- `outputs/`: selected model summaries and results
+- `report/`: final written capstone report
+- `data/`: data source documentation only
+
+## Business and Analytics Relevance
+This project demonstrates an end-to-end analytics workflow, including data cleaning, feature engineering, model comparison, validation, diagnostics, and communication of findings. The workflow is relevant to data analyst roles involving ETL-style data preparation, predictive modeling, performance evaluation, and data-informed decision support.
