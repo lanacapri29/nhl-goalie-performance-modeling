@@ -39,6 +39,13 @@ The lasso-informed regression explained a moderate amount of variation in save p
 
 Overall, the results suggest that team defensive context is meaningfully related to goalie save percentage, but it does not fully explain goalie performance. Traditional goalie statistics should be interpreted alongside team defensive context rather than as purely individual measures.
 
+## Reproducibility Note
+Raw data files are not included in this public repository. The R Markdown files document the full cleaning, exploratory analysis, modeling, diagnostics, and validation workflow. Files are organized in the order they were used:
+
+1. `01_data_cleaning.Rmd`
+2. `02_eda.Rmd`
+3. `03_modeling_diagnostics_validation.Rmd`
+
 ## Repository Structure
 - `scripts/`: R code for data cleaning, EDA, modeling, diagnostics, and validation
 - `docs/`: data dictionary and supporting documentation
